@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
+  <rect width="512" height="512" rx="96" fill="#0F1117"/>
+  <defs>
+    <linearGradient id="g" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#1F9CF0"/>
+      <stop offset="1" stop-color="#0065A9"/>
+    </linearGradient>
+  </defs>
+  <!-- VS Code ribbon mark, centered -->
+  <g transform="translate(96,96) scale(0.625)">
+    <path fill="url(#g)" d="M380 24 L468 66 V446 L380 488 L168 300 L72 372 L24 348 V164 L72 140 L168 212 Z
+      M380 132 L236 256 L380 380 Z"/>
+    <!-- left fold accent -->
+    <path fill="#0F1117" opacity="0.0" d="M0 0Z"/>
+  </g>
+</svg>
