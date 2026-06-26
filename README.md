@@ -17,7 +17,7 @@ Launches a WebView that connects to a running code-server instance. Appears as "
 ## Build dependencies (Termux)
 
 ```bash
-pkg install aapt2 ecj d8 apksigner
+pkg install aapt2 ecj d8 apksigner curl unzip
 ```
 
 ## Build
@@ -27,6 +27,10 @@ bash build.sh
 ```
 
 Output: `codeserver.apk`
+
+The first build downloads the Android SDK Platform 28 jar (~72 MB) from Google
+and caches it locally as `android-real.jar` (gitignored, checksum-verified);
+later builds reuse it.
 
 ## Install
 
