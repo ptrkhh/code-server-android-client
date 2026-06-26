@@ -15,10 +15,12 @@ import android.util.Base64;
 import android.view.Gravity;
 import android.view.KeyEvent;
 import android.view.View;
+import android.view.ViewGroup;
 import android.webkit.CookieManager;
 import android.webkit.DownloadListener;
 import android.webkit.JavascriptInterface;
 import android.webkit.PermissionRequest;
+import android.webkit.RenderProcessGoneDetail;
 import android.webkit.URLUtil;
 import android.webkit.ValueCallback;
 import android.webkit.WebChromeClient;
@@ -36,6 +38,7 @@ import java.io.FileOutputStream;
 
 public class MainActivity extends Activity {
     private WebView web;
+    private FrameLayout root;
     private TextView splash, reconnect;
     private ValueCallback<Uri[]> filePathCallback;
     private static final int REQ_FILE = 1;
@@ -62,6 +65,45 @@ public class MainActivity extends Activity {
             requestPermissions(new String[]{Manifest.permission.WRITE_EXTERNAL_STORAGE}, 2);
         }
 
+        // #9 splash overlay (kills white flash, theme-matched)
+        splash = overlay("VS Code", accent, false);
+        // #3 reconnect overlay (hidden until a load error)
+        reconnect = overlay("⚡  Disconnected — tap to reconnect", text, true);
+        reconnect.setVisibility(View.GONE);
+        reconnect.setOnClickListener(new View.OnClickListener() {
+            public void onClick(View v) {
+                reconnect.setVisibility(View.GONE);
+                splash.setVisibility(View.VISIBLE);
+                web.reload();
+            }
+        });
+
+        root = new FrameLayout(this);
+        FrameLayout.LayoutParams mp = new FrameLayout.LayoutParams(-1, -1);
+        buildWebView();                 // inserts the WebView at the bottom of the stack
+        root.addView(splash, mp);
+        root.addView(reconnect, mp);
+        setContentView(root);
+
+        // #C keep the process alive while backgrounded -> no cold reload on app-switch
+        startService(new Intent(this, KeepAliveService.class));
+
+        // #B restore this window's own page instead of always reloading the bare URL.
+        // Bare-URL reload is what made two windows converge onto code-server's shared
+        // "last opened folder". restoreState replays this window's history (its ?folder=).
+        if (b != null && web.restoreState(b) != null) {
+            // restored from saved history
+        } else if (b != null && b.getString("url") != null) {
+            web.loadUrl(b.getString("url"));
+        } else {
+            web.loadUrl(URL);
+        }
+    }
+
+    // Builds (or rebuilds) the WebView and inserts it beneath the overlays.
+    // Factored out of onCreate so onRenderProcessGone can recreate it in place
+    // after a renderer kill instead of tearing down the whole window.
+    private void buildWebView() {
         web = new WebView(this);
         WebSettings s = web.getSettings();
         s.setJavaScriptEnabled(true);
@@ -74,6 +116,18 @@ public class MainActivity extends Activity {
         s.setMixedContentMode(WebSettings.MIXED_CONTENT_ALWAYS_ALLOW);
         s.setCacheMode(WebSettings.LOAD_DEFAULT);
         CookieManager.getInstance().setAcceptThirdPartyCookies(web, true);
+
+        // #D The page lives in a separate, sandboxed renderer process that the
+        // KeepAliveService does NOT cover. By default Android *waives* that
+        // renderer's priority the instant the WebView stops being visible, so an
+        // app-switch makes it the first thing the low-memory killer reclaims --
+        // the app process survives but the *page* is destroyed and reloads on
+        // return. Pin the renderer to IMPORTANT and keep it pinned while
+        // backgrounded (waivedWhenNotVisible = false) so the live page persists
+        // across app-switches.
+        if (Build.VERSION.SDK_INT >= 26) {
+            web.setRendererPriorityPolicy(WebView.RENDERER_PRIORITY_IMPORTANT, false);
+        }
 
         // #1 blob-download bridge
         web.addJavascriptInterface(new Object() {
@@ -105,44 +159,7 @@ public class MainActivity extends Activity {
             }
         });
 
-        web.setOnLongClickListener(new View.OnLongClickListener() {
-            public boolean onLongClick(View v) { return true; }
-        });
-        web.setLongClickable(false);
-
-        // #9 splash overlay (kills white flash, theme-matched)
-        splash = overlay("VS Code", accent, false);
-        // #3 reconnect overlay (hidden until a load error)
-        reconnect = overlay("⚡  Disconnected — tap to reconnect", text, true);
-        reconnect.setVisibility(View.GONE);
-        reconnect.setOnClickListener(new View.OnClickListener() {
-            public void onClick(View v) {
-                reconnect.setVisibility(View.GONE);
-                splash.setVisibility(View.VISIBLE);
-                web.reload();
-            }
-        });
-
-        FrameLayout root = new FrameLayout(this);
-        FrameLayout.LayoutParams mp = new FrameLayout.LayoutParams(-1, -1);
-        root.addView(web, mp);
-        root.addView(splash, mp);
-        root.addView(reconnect, mp);
-        setContentView(root);
-
-        // #C keep the process alive while backgrounded -> no cold reload on app-switch
-        startService(new Intent(this, KeepAliveService.class));
-
-        // #B restore this window's own page instead of always reloading the bare URL.
-        // Bare-URL reload is what made two windows converge onto code-server's shared
-        // "last opened folder". restoreState replays this window's history (its ?folder=).
-        if (b != null && web.restoreState(b) != null) {
-            // restored from saved history
-        } else if (b != null && b.getString("url") != null) {
-            web.loadUrl(b.getString("url"));
-        } else {
-            web.loadUrl(URL);
-        }
+        root.addView(web, 0, new FrameLayout.LayoutParams(-1, -1));
     }
 
     @Override
@@ -211,6 +228,23 @@ public class MainActivity extends Activity {
                 splash.setVisibility(View.GONE);
                 reconnect.setVisibility(View.VISIBLE);
             }
+        }
+        @Override
+        public boolean onRenderProcessGone(WebView v, RenderProcessGoneDetail d) {
+            // #D Safety net: if the renderer is reclaimed/crashes anyway, the
+            // framework would otherwise kill our whole (keep-alive) process.
+            // Instead, drop the dead WebView, rebuild a fresh one, and reload
+            // this window's page. Returning true claims the event as handled.
+            String back = currentUrl;
+            if (v != null) {
+                ViewGroup parent = (ViewGroup) v.getParent();
+                if (parent != null) parent.removeView(v);
+                v.destroy();
+            }
+            buildWebView();
+            splash.setVisibility(View.VISIBLE);
+            web.loadUrl(back != null ? back : URL);
+            return true;
         }
     }
 
